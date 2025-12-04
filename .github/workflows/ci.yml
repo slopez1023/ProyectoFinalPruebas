@@ -1,0 +1,87 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout codigo
+      uses: actions/checkout@v4
+
+    - name: Configurar Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Instalar dependencias del backend
+      working-directory: ./backend
+      run: npm install
+
+    - name: Instalar dependencias del frontend
+      working-directory: ./frontend
+      run: npm install
+
+    - name: Instalar dependencias E2E
+      working-directory: ./e2e
+      run: |
+        npm install
+        npx playwright install --with-deps chromium
+
+    - name: Ejecutar pruebas unitarias
+      working-directory: ./backend
+      run: npm test
+
+    - name: Ejecutar pruebas de integracion
+      working-directory: ./backend
+      run: npm run test:integration
+
+    - name: Analisis estatico backend
+      working-directory: ./backend
+      run: npm run lint
+
+    - name: Analisis estatico frontend
+      working-directory: ./frontend
+      run: npm run lint
+
+    - name: Iniciar backend en segundo plano
+      working-directory: ./backend
+      run: |
+        nohup npm start > backend.log 2>&1 &
+        echo $! > backend.pid
+        sleep 5
+        curl --retry 10 --retry-delay 2 --retry-connrefused http://localhost:3001/api/health || (cat backend.log && exit 1)
+
+    - name: Build frontend
+      working-directory: ./frontend
+      run: npm run build
+
+    - name: Iniciar frontend en segundo plano
+      working-directory: ./frontend
+      run: |
+        nohup npm start > frontend.log 2>&1 &
+        echo $! > frontend.pid
+        sleep 10
+        curl --retry 10 --retry-delay 2 --retry-connrefused http://localhost:3000 || (cat frontend.log && exit 1)
+
+    - name: Ejecutar pruebas E2E
+      working-directory: ./e2e
+      run: npm test
+
+    - name: Detener servidores
+      if: always()
+      run: |
+        if [ -f ./backend/backend.pid ]; then kill $(cat ./backend/backend.pid) || true; fi
+        if [ -f ./frontend/frontend.pid ]; then kill $(cat ./frontend/frontend.pid) || true; fi
+
+    - name: Pipeline exitoso
+      if: success()
+      run: echo "OK"
